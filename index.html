@@ -2388,14 +2388,6 @@ document.getElementById('pw-input-confirm').addEventListener('keydown', e => { i
 document.getElementById('pw-modal-btn').addEventListener('click', checkPassword);
 document.getElementById('pw-modal-close').addEventListener('click', () => document.getElementById('pw-modal').classList.remove('show'));
 
-// Bind top-bar tabs programmatically (CSP blocks inline onclick)
-document.getElementById('tab-viewer').addEventListener('click', () => setMode('viewer'));
-document.getElementById('tab-admin').addEventListener('click', () => setMode('admin'));
-document.getElementById('admin-lock-btn').addEventListener('click', lockAdmin);
-document.getElementById('theme-notion').addEventListener('click', () => setTheme('notion'));
-document.getElementById('theme-stone').addEventListener('click', () => setTheme('stone'));
-document.getElementById('theme-rpg').addEventListener('click', () => setTheme('rpg'));
-
 function lockAdmin() {
   state.isAdmin = false;
   enterViewer();
@@ -5733,6 +5725,24 @@ function buildClickerBlock(d, roster, cSlots) {
 setInterval(() => {
   if (!state.isAdmin && !fbDatabase) renderViewer();
 }, 60000);
+
+// ═══════════════════════════════════════════════════════════
+// BIND ALL LISTENERS (after all functions defined)
+// ═══════════════════════════════════════════════════════════
+
+// Password modal
+document.getElementById('pw-input').addEventListener('keydown', e => { if(e.key === 'Enter') checkPassword(); });
+document.getElementById('pw-input-confirm').addEventListener('keydown', e => { if(e.key === 'Enter') checkPassword(); });
+document.getElementById('pw-modal-btn').addEventListener('click', checkPassword);
+document.getElementById('pw-modal-close').addEventListener('click', () => document.getElementById('pw-modal').classList.remove('show'));
+
+// Top bar
+document.getElementById('tab-viewer').addEventListener('click', () => setMode('viewer'));
+document.getElementById('tab-admin').addEventListener('click', () => setMode('admin'));
+document.getElementById('admin-lock-btn').addEventListener('click', lockAdmin);
+document.getElementById('theme-notion').addEventListener('click', () => setTheme('notion'));
+document.getElementById('theme-stone').addEventListener('click', () => setTheme('stone'));
+document.getElementById('theme-rpg').addEventListener('click', () => setTheme('rpg'));
 
 // ═══════════════════════════════════════════════════════════
 // INIT — pull Firebase data first, then render
