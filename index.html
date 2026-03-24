@@ -2144,17 +2144,21 @@ function initFromFirebase(callback) {
 
 // Real-time listener for viewer — fires instantly when admin saves
 let _fbListeners = [];
+let _fbInitDone = false; // guard: don't re-render during initial load
+
 function subscribeToFirebase() {
   _fbListeners.forEach(unsub => unsub());
   _fbListeners = [];
   if (!fbDatabase) return;
+  // Small delay so initFromFirebase finishes first before listeners start re-rendering
+  setTimeout(() => { _fbInitDone = true; }, 2000);
   FB_SYNC_KEYS.forEach(key => {
     const ref = fbRef(key);
     const handler = ref.on('value', snapshot => {
       const val = snapshot.val();
       if (val !== null) {
         try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
-        if (!state.isAdmin) renderViewer();
+        if (!state.isAdmin && _fbInitDone) renderViewer();
       }
     });
     _fbListeners.push(() => ref.off('value', handler));
