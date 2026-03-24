@@ -2333,6 +2333,22 @@ function getPassword() { return getData('admin_pw', null); }
 function isPasswordSet() { return !!getPassword(); }
 
 function openAdminModal() {
+  // If Firebase is available, always check it first to get the real password state
+  if (fbDatabase) {
+    fbDatabase.ref('data/admin_pw').once('value', snapshot => {
+      const fbPw = snapshot.val();
+      if (fbPw) {
+        // Sync to localStorage so future checks work
+        try { localStorage.setItem('admin_pw', JSON.stringify(fbPw)); } catch(e) {}
+      }
+      _showAdminModal();
+    }, () => _showAdminModal()); // on error fall back
+  } else {
+    _showAdminModal();
+  }
+}
+
+function _showAdminModal() {
   const firstTime = !isPasswordSet();
   document.getElementById('pw-modal-title').textContent = firstTime ? 'Create Admin Password' : 'Admin Access';
   document.getElementById('pw-modal-desc').textContent  = firstTime
@@ -4335,11 +4351,40 @@ function renderGruulAdmin(n) {
   const pri = filterByClass(activeRoster, ['Priest']);
   const tanks = filterByClass(activeRoster, ['Paladin','Druid','Warrior']);
 
+  // MD — one slot per hunter, target can repeat (multiple hunters on same tank)
+  const gruulTankEntries = [
+    {name:d.tanks?.t1, label:'Main Tank'},
+    {name:d.tanks?.t2, label:'Offtank'}
+  ].filter(t => t.name);
+
+  const gruulMarkerIcons = ['skull','cross','diamond','star','triangle','square','moon'];
   document.getElementById('gruul-tanks-fields').innerHTML =
-    selectField('gruul-t1',   'Main Tank',       tanks, d.tanks?.t1  ||'') +
-    selectField('gruul-t2',   'Offtank',         tanks, d.tanks?.t2  ||'') +
-    buildMDPairFields('gruul-md1', d.md?.md1, hun, [{name:d.tanks?.t1,label:'Main Tank'},{name:d.tanks?.t2,label:'Offtank'}], currentGruulRoster) +
-    buildMDPairFields('gruul-md2', d.md?.md2, hun, [{name:d.tanks?.t1,label:'Main Tank'},{name:d.tanks?.t2,label:'Offtank'}], currentGruulRoster);
+    selectField('gruul-t1', 'Main Tank', tanks, d.tanks?.t1||'') +
+    selectField('gruul-t2', 'Offtank',   tanks, d.tanks?.t2||'') +
+    (hun.length ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
+      <div class="card-title" style="margin-bottom:8px;">Misdirection</div>` +
+      hun.map((h, i) => {
+        const idBase = `gruul-md-${h.name.replace(/[^a-z0-9]/gi,'_')}`;
+        const savedMD = (d.md || {})[h.name] || {};
+        const savedTarget = typeof savedMD === 'object' ? (savedMD.target || '') : (savedMD || '');
+        const markerIcon = gruulMarkerIcons[i] || null;
+        const hCol = CLASS_COLORS['Hunter'];
+        const tCol = savedTarget ? (CLASS_COLORS[(getRoster().find(r=>r.name===savedTarget)||{}).cls||'']||'#aaa') : null;
+        const tStyle = tCol ? `color:${tCol};font-weight:700;background:rgba(${hexToRgb(tCol)},0.1);border-color:rgba(${hexToRgb(tCol)},0.3);` : '';
+        const targetOpts = gruulTankEntries.map(t =>
+          `<option value="${t.name}" ${savedTarget===t.name?'selected':''}>${t.label} / ${t.name}</option>`
+        ).join('');
+        return `<div style="display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;margin-bottom:6px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            ${markerIcon ? markerSvg(markerIcon, 14) : ''}
+            <span style="color:${hCol};font-weight:700;font-size:13px;">${classIcon('Hunter',13)} ${h.name}</span>
+          </div>
+          <select id="${idBase}-target" data-hunter="${h.name}" data-roster="${currentGruulRoster}"
+            style="width:100%;background:var(--bg-deep);border:1px solid var(--border);border-radius:4px;padding:7px 10px;font-size:13px;font-family:'Inter',sans-serif;outline:none;${tStyle}">
+            <option value="">— MD Target (Tank) —</option>${targetOpts}
+          </select>
+        </div>`;
+      }).join('') + `</div>` : '');
 
   const gruulTankNames = [d.tanks?.t1, d.tanks?.t2];
   const gruulHealRows = buildHealAssignBlock(d, healers, gruulTankNames, 'gruul', currentGruulRoster, h => getEffectiveSpec(currentGruulRoster, h.name, h.cls));
@@ -4388,13 +4433,25 @@ function renderGruulAdmin(n) {
     });
   });
 
-  // MD pair selects → save state class on change
-  ['gruul-md1','gruul-md2'].forEach(base => {
-    ['hunter','target'].forEach(field => {
-      const sel = document.getElementById(`${base}-${field}`);
-      if (sel) sel.addEventListener('change', function() {
-        this.className = this.value ? 'state-done' : 'state-pending';
-      });
+  // MD per-hunter selects → save on change
+  hun.forEach(h => {
+    const idBase = `gruul-md-${h.name.replace(/[^a-z0-9]/gi,'_')}`;
+    const sel = document.getElementById(`${idBase}-target`);
+    if (sel) sel.addEventListener('change', function() {
+      const rn = currentGruulRoster;
+      const dd = getGruulData(rn);
+      dd.md = dd.md || {};
+      dd.md[h.name] = { target: this.value };
+      saveGruulData(rn, dd);
+      if (this.value) {
+        const tCol = CLASS_COLORS[(getRoster().find(r=>r.name===this.value)||{}).cls||'']||'#aaa';
+        this.style.color = tCol; this.style.fontWeight = '700';
+        this.style.background = `rgba(${hexToRgb(tCol)},0.1)`;
+        this.style.borderColor = `rgba(${hexToRgb(tCol)},0.3)`;
+      } else {
+        this.style.color=''; this.style.fontWeight='';
+        this.style.background=''; this.style.borderColor='';
+      }
     });
   });
 
@@ -4418,15 +4475,28 @@ function collectAndSaveGruul() {
   const n = currentGruulRoster;
   const c = id => { const el=document.getElementById(id); return el?el.value:''; };
   const d = getGruulData(n);
+  const roster = getRoster();
+  const magtActive = getActiveSelection(n);
+  const activeRoster = magtActive.length > 0 ? filterByActive(roster, magtActive) : roster;
+  const hun = filterByClass(activeRoster, ['Hunter']);
+
+  // Collect per-hunter MD
+  const md = {};
+  hun.forEach(h => {
+    const idBase = `gruul-md-${h.name.replace(/[^a-z0-9]/gi,'_')}`;
+    const sel = document.getElementById(`${idBase}-target`);
+    if (sel) md[h.name] = { target: sel.value };
+    else { const saved = (d.md||{})[h.name]; if (saved) md[h.name] = saved; }
+  });
+
   saveGruulData(n, {
     tanks: { t1: c('gruul-t1'), t2: c('gruul-t2') },
-    md:    { md1: collectMDPair('gruul-md1'), md2: collectMDPair('gruul-md2') },
+    md,
     heals: (() => {
       const existing = getGruulData(n).heals || {};
       const chainEl = document.getElementById('gruul-chain');
       const result = { ...existing, chain: chainEl ? chainEl.value : (existing.chain||'') };
       const magtD = getMagtData(n);
-      const roster = getRoster();
       const active = magtD.active || [];
       const sha = roster.filter(p => active.includes(p.name) && p.cls === 'Shaman');
       const shaResto = sha.filter(p => getEffectiveSpec(currentGruulRoster, p.name, 'Shaman') === 'Resto');
@@ -5128,10 +5198,39 @@ function buildGruulSection(n) {
   const tacticsImgSrc = d.tactics_b64 || d.tactics_url || '';
   const header = bossSectionHeader('🪨 Gruul\'s Lair', tacticsImgSrc, d.explanation);
 
-  // Tanks with marker icons, same style as Magt/Maulgar
+  // Tanks + per-hunter MD rows
+  const gruulMarkerIcons = ['skull','cross','diamond','star','triangle','square','moon'];
+  const md = d.md || {};
+  const gruulTankToLabel = { [d.tanks?.t1]: 'Main Tank', [d.tanks?.t2]: 'Offtank' };
+
+  const hunterMDRows = Object.entries(md)
+    .filter(([, val]) => val && (typeof val === 'object' ? val.target : val))
+    .map(([hunterName, val], i) => {
+      const target = typeof val === 'object' ? val.target : val;
+      const mIcon = gruulMarkerIcons[i] || '';
+      const isMe = viewerMe && (viewerMe === hunterName || viewerMe === target);
+      if (viewerMe && !isMe) return '';
+      const hp = roster.find(r => r.name === hunterName);
+      const hCol = CLASS_COLORS[hp?.cls||''] || '#aaa';
+      const rgb = isMe ? hexToRgb(hCol) : '';
+      const bossLabel = gruulTankToLabel[target] || '';
+      return `<div class="v-row ${isMe?'highlighted':''}" ${isMe?`style="--hl-col:${rgb}"`:''}>
+        <span class="v-label" style="display:flex;align-items:center;gap:5px;">
+          ${mIcon ? markerSvg(mIcon, 13) : ''}
+          ${vName(hunterName, roster)}
+        </span>
+        <span class="v-value" style="gap:4px;">
+          <span style="color:var(--text-dim);font-size:11px;">MD →</span>
+          ${bossLabel ? `<span style="color:var(--text-dim);font-size:11px;font-weight:600;">${bossLabel} /</span>` : ''}
+          ${vName(target, roster)}
+        </span>
+      </div>`;
+    }).filter(Boolean);
+
   const tanksCard = vCard('Tanks & Misdirection', [
-    vTankMDRow('','','Main Tank','',d.tanks?.t1,d.md?.md1,roster),
-    vTankMDRow('','','Offtank','',d.tanks?.t2,d.md?.md2,roster),
+    vRow('Main Tank', d.tanks?.t1, roster),
+    vRow('Offtank',   d.tanks?.t2, roster),
+    ...hunterMDRows
   ]);
 
   // Heals — Gruul uses es1/es2 (not cleaver/habibi like Magt)
@@ -5438,31 +5537,45 @@ function buildMaulgarTanks(d, roster) {
   const markerIcons = ['skull','cross','diamond','star','triangle','square','moon'];
   const md = d.md || {};
 
-  // Collect all hunters who have an MD target assigned
+  const tankToLabel = {
+    [d.tanks?.maulgar]:  'Maulgar',
+    [d.tanks?.blindeye]: 'Blindeye',
+    [d.tanks?.olm]:      'Olm',
+    [d.tanks?.kiggler]:  'Kiggler',
+    [d.tanks?.krosh]:    'Krosh'
+  };
+
   const hunterMDRows = Object.entries(md)
-    .filter(([name, val]) => val && (typeof val === 'object' ? val.target : val))
-    .map(([name, val], i) => {
+    .filter(([, val]) => val && (typeof val === 'object' ? val.target : val))
+    .map(([hunterName, val], i) => {
       const target = typeof val === 'object' ? val.target : val;
-      const markerIcon = markerIcons[i] || '';
-      return vTankMDRow(markerIcon, markerIcon, name, '', target, {hunter: name, target}, roster);
-    });
-
-  // Legacy skull/cross format fallback
-  const legacyRows = [];
-  if (md.skull && !Object.keys(md).some(k => !['skull','cross'].includes(k))) {
-    legacyRows.push(vTankMDRow('skull','skull','Skull / Maulgar','',d.tanks?.maulgar,md.skull,roster));
-    legacyRows.push(vTankMDRow('cross','cross','Cross / Blindeye','',d.tanks?.blindeye,md.cross,roster));
-  }
-
-  const mdRows = hunterMDRows.length ? hunterMDRows : legacyRows;
+      const mIcon = markerIcons[i] || '';
+      const isMe = viewerMe && (viewerMe === hunterName || viewerMe === target);
+      if (viewerMe && !isMe) return '';
+      const hp = roster.find(r => r.name === hunterName);
+      const tp = roster.find(r => r.name === target);
+      const hCol = CLASS_COLORS[hp?.cls||''] || '#aaa';
+      const rgb = isMe ? hexToRgb(hCol) : '';
+      const bossLabel = tankToLabel[target] || '';
+      return `<div class="v-row ${isMe?'highlighted':''}" ${isMe?`style="--hl-col:${rgb}"`:''}>
+        <span class="v-label" style="display:flex;align-items:center;gap:5px;">
+          ${vName(hunterName, roster)}
+        </span>
+        <span class="v-value" style="gap:4px;">
+          <span style="color:var(--text-dim);font-size:11px;">MD →</span>
+          ${bossLabel ? `<span style="color:var(--text-dim);font-size:11px;font-weight:600;">${bossLabel} /</span>` : ''}
+          ${vName(target, roster)}
+        </span>
+      </div>`;
+    }).filter(Boolean);
 
   return vCard('Tanks & Misdirection', [
-    vRow('Maulgar Tank', d.tanks?.maulgar, roster),
-    vRow('Blindeye Tank', d.tanks?.blindeye, roster),
-    vRow('Olm Tank', d.tanks?.olm, roster),
-    vRow('Kiggler Tank', d.tanks?.kiggler, roster),
-    vRow('Krosh / Mage Tank', d.tanks?.krosh, roster),
-    ...mdRows
+    vRow('Maulgar Tank',      d.tanks?.maulgar,  roster),
+    vRow('Blindeye Tank',     d.tanks?.blindeye, roster),
+    vRow('Olm Tank',          d.tanks?.olm,      roster),
+    vRow('Kiggler Tank',      d.tanks?.kiggler,  roster),
+    vRow('Krosh / Mage Tank', d.tanks?.krosh,    roster),
+    ...hunterMDRows
   ]);
 }
 
