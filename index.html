@@ -2333,66 +2333,48 @@ function getPassword() { return getData('admin_pw', null); }
 function isPasswordSet() { return !!getPassword(); }
 
 function openAdminModal() {
-  // If Firebase is available, always check it first to get the real password state
   if (fbDatabase) {
     fbDatabase.ref('data/admin_pw').once('value', snapshot => {
       const fbPw = snapshot.val();
-      if (fbPw) {
-        // Sync to localStorage so future checks work
-        try { localStorage.setItem('admin_pw', JSON.stringify(fbPw)); } catch(e) {}
-      }
-      _showAdminModal();
-    }, () => _showAdminModal()); // on error fall back
+      if (fbPw) try { localStorage.setItem('admin_pw', JSON.stringify(fbPw)); } catch(e) {}
+      _showAdminModal(!!fbPw);
+    }, () => _showAdminModal(isPasswordSet()));
   } else {
-    _showAdminModal();
+    _showAdminModal(isPasswordSet());
   }
 }
 
-function _showAdminModal() {
-  const firstTime = !isPasswordSet();
-  document.getElementById('pw-modal-title').textContent = firstTime ? 'Create Admin Password' : 'Admin Access';
-  document.getElementById('pw-modal-desc').textContent  = firstTime
-    ? 'No password set yet. Create one to enable Admin Mode.'
-    : 'Enter the raid leader password to access Admin Mode';
-  document.getElementById('pw-input').value = '';
-  document.getElementById('pw-input-confirm').value = '';
-  document.getElementById('pw-input-confirm').style.display = firstTime ? '' : 'none';
-  document.getElementById('pw-modal-btn').textContent = firstTime ? 'Create Password' : 'Enter';
+function _showAdminModal(pwExists) {
+  document.getElementById('pw-input-confirm').style.display = 'none';
   document.getElementById('pw-error').textContent = '';
   document.getElementById('pw-modal').classList.add('show');
-  setTimeout(() => document.getElementById('pw-input').focus(), 100);
-}
-
-function setMode(mode) {
-  if (mode === 'admin') {
-    if (!state.isAdmin) { openAdminModal(); return; }
-    enterAdmin();
+  if (pwExists) {
+    document.getElementById('pw-modal-title').textContent = 'Admin Access';
+    document.getElementById('pw-modal-desc').textContent = 'Enter the raid leader password to access Admin Mode';
+    document.getElementById('pw-input').value = '';
+    document.getElementById('pw-input').style.display = '';
+    document.getElementById('pw-modal-btn').style.display = '';
+    document.getElementById('pw-modal-btn').textContent = 'Enter';
+    setTimeout(() => document.getElementById('pw-input').focus(), 100);
   } else {
-    enterViewer();
+    document.getElementById('pw-modal-title').textContent = 'Admin Access';
+    document.getElementById('pw-modal-desc').textContent = 'No password set yet. Ask your raid leader to set one in Admin → Settings.';
+    document.getElementById('pw-input').style.display = 'none';
+    document.getElementById('pw-modal-btn').style.display = 'none';
   }
 }
 
 function checkPassword() {
   const v = document.getElementById('pw-input').value;
   if (!v) { document.getElementById('pw-error').textContent = 'Password cannot be empty'; return; }
-
-  if (!isPasswordSet()) {
-    // First-time setup
-    const v2 = document.getElementById('pw-input-confirm').value;
-    if (v !== v2) { document.getElementById('pw-error').textContent = 'Passwords do not match'; return; }
-    setData('admin_pw', v);
+  if (v === getPassword()) {
     document.getElementById('pw-modal').classList.remove('show');
     state.isAdmin = true;
     enterAdmin();
   } else {
-    if (v === getPassword()) {
-      document.getElementById('pw-modal').classList.remove('show');
-      state.isAdmin = true;
-      enterAdmin();
-    } else {
-      document.getElementById('pw-error').textContent = 'Incorrect password';
-    }
+    document.getElementById('pw-error').textContent = 'Incorrect password';
   }
+}
 }
 document.getElementById('pw-input').addEventListener('keydown', e => { if(e.key === 'Enter') checkPassword(); });
 document.getElementById('pw-input-confirm').addEventListener('keydown', e => { if(e.key === 'Enter') checkPassword(); });
