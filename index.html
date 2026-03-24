@@ -2393,6 +2393,15 @@ function lockAdmin() {
   enterViewer();
 }
 
+function setMode(mode) {
+  if (mode === 'admin') {
+    if (!state.isAdmin) { openAdminModal(); return; }
+    enterAdmin();
+  } else {
+    enterViewer();
+  }
+}
+
 function enterAdmin() {
   unsubscribeFromFirebase(); // admin reads directly, no need for listener
   document.getElementById('viewer-mode').style.display = 'none';
