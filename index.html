@@ -2102,7 +2102,8 @@ const FB_SYNC_KEYS = new Set([
   'magt_r1','magt_r2','magt_r3',
   'maulgar_r1','maulgar_r2','maulgar_r3',
   'gruul_r1','gruul_r2','gruul_r3',
-  'wl_rotations'
+  'wl_rotations',
+  'admin_pw'
 ]);
 
 let fbDatabase = null;
@@ -2133,8 +2134,12 @@ function initFromFirebase(callback) {
         try { localStorage.setItem(key, JSON.stringify(all[key])); } catch(e) {}
       }
     });
+    // If admin_pw exists in Firebase but not localStorage, sync it down
+    if (all['admin_pw']) {
+      try { localStorage.setItem('admin_pw', JSON.stringify(all['admin_pw'])); } catch(e) {}
+    }
     callback();
-  }, () => callback()); // on error still proceed
+  }, () => callback());
 }
 
 // Real-time listener for viewer — fires instantly when admin saves
@@ -4523,10 +4528,40 @@ function renderMaulgarAdmin(n) {
     selectField('maul-t-kiggler', 'Kiggler Tank (Druid/Hunter)', kigTanks, d.tanks?.kiggler||'') +
     selectField('maul-t-krosh',   'Krosh / Mage Tank', mag, d.tanks?.krosh||'');
 
-  // MD — with WoW raid marker icons
-  document.getElementById('maulgar-md-fields').innerHTML =
-    buildMDPairFields('maul-md-skull', d.md?.skull, hun, [{name:d.tanks?.maulgar,label:'Maulgar'},{name:d.tanks?.blindeye,label:'Blindeye'},{name:d.tanks?.olm,label:'Olm'},{name:d.tanks?.kiggler,label:'Kiggler'},{name:d.tanks?.krosh,label:'Krosh'}], currentMaulgarRoster, 'skull') +
-    buildMDPairFields('maul-md-cross', d.md?.cross, hun, [{name:d.tanks?.maulgar,label:'Maulgar'},{name:d.tanks?.blindeye,label:'Blindeye'},{name:d.tanks?.olm,label:'Olm'},{name:d.tanks?.kiggler,label:'Kiggler'},{name:d.tanks?.krosh,label:'Krosh'}], currentMaulgarRoster, 'cross');
+  // MD — one slot per hunter (any spec), target tank is selectable
+  const maulTankEntries = [
+    {name:d.tanks?.maulgar,label:'Maulgar'},
+    {name:d.tanks?.blindeye,label:'Blindeye'},
+    {name:d.tanks?.olm,label:'Olm'},
+    {name:d.tanks?.kiggler,label:'Kiggler'},
+    {name:d.tanks?.krosh,label:'Krosh'}
+  ].filter(t => t.name);
+
+  const markerIcons = ['skull','cross','diamond','star','triangle','square','moon'];
+  document.getElementById('maulgar-md-fields').innerHTML = hun.length
+    ? hun.map((h, i) => {
+        const idBase = `maul-md-${h.name.replace(/[^a-z0-9]/gi,'_')}`;
+        const savedMD = (d.md || {})[h.name] || {};
+        const savedTarget = typeof savedMD === 'object' ? (savedMD.target || '') : (savedMD || '');
+        const markerIcon = markerIcons[i] || null;
+        const hCol = CLASS_COLORS['Hunter'];
+        const tCol = savedTarget ? (CLASS_COLORS[(getRoster().find(r=>r.name===savedTarget)||{}).cls||'']||'#aaa') : null;
+        const tStyle = tCol ? `color:${tCol};font-weight:700;background:rgba(${hexToRgb(tCol)},0.1);border-color:rgba(${hexToRgb(tCol)},0.3);` : '';
+        const targetOpts = maulTankEntries.map(t =>
+          `<option value="${t.name}" ${savedTarget===t.name?'selected':''}>${t.label} / ${t.name}</option>`
+        ).join('');
+        return `<div style="display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;margin-bottom:6px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            ${markerIcon ? markerSvg(markerIcon, 14) : ''}
+            <span style="color:${hCol};font-weight:700;font-size:13px;">${classIcon('Hunter',13)} ${h.name}</span>
+          </div>
+          <select id="${idBase}-target" data-hunter="${h.name}" data-roster="${currentMaulgarRoster}"
+            style="width:100%;background:var(--bg-deep);border:1px solid var(--border);border-radius:4px;padding:7px 10px;font-size:13px;font-family:'Inter',sans-serif;outline:none;${tStyle}">
+            <option value="">— MD Target (Tank) —</option>${targetOpts}
+          </select>
+        </div>`;
+      }).join('')
+    : '<div style="color:var(--text-dim);font-size:12px;">No hunters in active roster</div>';
 
 
 
@@ -4571,13 +4606,27 @@ function renderMaulgarAdmin(n) {
     });
   });
 
-  // MD pair selects → save state class on change
-  ['maul-md-skull','maul-md-cross'].forEach(base => {
-    ['hunter','target'].forEach(field => {
-      const sel = document.getElementById(`${base}-${field}`);
-      if (sel) sel.addEventListener('change', function() {
-        this.className = this.value ? 'state-done' : 'state-pending';
-      });
+  // MD pair selects → save target on change (per hunter)
+  hun.forEach(h => {
+    const idBase = `maul-md-${h.name.replace(/[^a-z0-9]/gi,'_')}`;
+    const sel = document.getElementById(`${idBase}-target`);
+    if (sel) sel.addEventListener('change', function() {
+      this.className = this.value ? 'state-done' : 'state-pending';
+      const rn = currentMaulgarRoster;
+      const dd = getMaulgarData(rn);
+      dd.md = dd.md || {};
+      dd.md[h.name] = { target: this.value };
+      saveMaulgarData(rn, dd);
+      // update select color
+      if (this.value) {
+        const tCol = CLASS_COLORS[(getRoster().find(r=>r.name===this.value)||{}).cls||'']||'#aaa';
+        this.style.color = tCol; this.style.fontWeight = '700';
+        this.style.background = `rgba(${hexToRgb(tCol)},0.1)`;
+        this.style.borderColor = `rgba(${hexToRgb(tCol)},0.3)`;
+      } else {
+        this.style.color = ''; this.style.fontWeight = '';
+        this.style.background = ''; this.style.borderColor = '';
+      }
     });
   });
 
@@ -4607,15 +4656,31 @@ function renderMaulgarAdmin(n) {
 
 function collectMaulgarData(n) {
   const c = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const roster = getRoster();
+  const magtActive = getActiveSelection(n);
+  const activeRoster = magtActive.length > 0 ? filterByActive(roster, magtActive) : roster;
+  const hun = filterByClass(activeRoster, ['Hunter']);
+
+  // Collect per-hunter MD targets
+  const md = {};
+  hun.forEach(h => {
+    const idBase = `maul-md-${h.name.replace(/[^a-z0-9]/gi,'_')}`;
+    const sel = document.getElementById(`${idBase}-target`);
+    if (sel) md[h.name] = { target: sel.value };
+    else {
+      // preserve saved value if element not in DOM
+      const saved = (getMaulgarData(n).md || {})[h.name];
+      if (saved) md[h.name] = saved;
+    }
+  });
+
   return {
     tanks: { maulgar: c('maul-t-maulgar'), blindeye: c('maul-t-blindeye'), olm: c('maul-t-olm'), kiggler: c('maul-t-kiggler'), krosh: c('maul-t-krosh') },
-    md: { skull: collectMDPair('maul-md-skull'), cross: collectMDPair('maul-md-cross') },
-
+    md,
     heals: (() => {
       const existing = getMaulgarData(n).heals || {};
       const chainEl = document.getElementById('maul-heal-chain');
       const result = { ...existing, chain: chainEl ? chainEl.value : (existing.chain||'') };
-      const roster = getRoster();
       const magtD2 = getMagtData(currentMaulgarRoster);
       const active = magtD2.active || [];
       const shaResto2 = roster.filter(p => active.includes(p.name) && p.cls === 'Shaman' && getEffectiveSpec(currentMaulgarRoster, p.name, 'Shaman') === 'Resto');
@@ -5370,12 +5435,34 @@ function buildMagtHeals(d, roster, n=1) {
 }
 
 function buildMaulgarTanks(d, roster) {
+  const markerIcons = ['skull','cross','diamond','star','triangle','square','moon'];
+  const md = d.md || {};
+
+  // Collect all hunters who have an MD target assigned
+  const hunterMDRows = Object.entries(md)
+    .filter(([name, val]) => val && (typeof val === 'object' ? val.target : val))
+    .map(([name, val], i) => {
+      const target = typeof val === 'object' ? val.target : val;
+      const markerIcon = markerIcons[i] || '';
+      return vTankMDRow(markerIcon, markerIcon, name, '', target, {hunter: name, target}, roster);
+    });
+
+  // Legacy skull/cross format fallback
+  const legacyRows = [];
+  if (md.skull && !Object.keys(md).some(k => !['skull','cross'].includes(k))) {
+    legacyRows.push(vTankMDRow('skull','skull','Skull / Maulgar','',d.tanks?.maulgar,md.skull,roster));
+    legacyRows.push(vTankMDRow('cross','cross','Cross / Blindeye','',d.tanks?.blindeye,md.cross,roster));
+  }
+
+  const mdRows = hunterMDRows.length ? hunterMDRows : legacyRows;
+
   return vCard('Tanks & Misdirection', [
-    vTankMDRow('skull','skull','Skull / Maulgar','',d.tanks?.maulgar,d.md?.skull,roster),
-    vTankMDRow('cross','cross','Cross / Blindeye','',d.tanks?.blindeye,d.md?.cross,roster),
-    vRow('Olm Tank',d.tanks?.olm,roster),
-    vRow('Kiggler Tank',d.tanks?.kiggler,roster),
-    vRow('Krosh / Mage Tank',d.tanks?.krosh,roster),
+    vRow('Maulgar Tank', d.tanks?.maulgar, roster),
+    vRow('Blindeye Tank', d.tanks?.blindeye, roster),
+    vRow('Olm Tank', d.tanks?.olm, roster),
+    vRow('Kiggler Tank', d.tanks?.kiggler, roster),
+    vRow('Krosh / Mage Tank', d.tanks?.krosh, roster),
+    ...mdRows
   ]);
 }
 
