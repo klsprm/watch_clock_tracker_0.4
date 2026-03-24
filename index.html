@@ -1435,19 +1435,19 @@ body {
   <h1>⚔ RAID MANAGER</h1>
   <div class="topbar-sep"></div>
   <div class="mode-tabs">
-    <button class="mode-tab active" onclick="setMode('viewer')" id="tab-viewer">Viewer</button>
-    <button class="mode-tab" onclick="setMode('admin')" id="tab-admin">Admin</button>
+    <button class="mode-tab active" id="tab-viewer">Viewer</button>
+    <button class="mode-tab" id="tab-admin">Admin</button>
   </div>
   <div class="spacer"></div>
   <div id="theme-switcher">
     <span class="theme-label">Theme:</span>
-    <button class="theme-btn active" onclick="setTheme('notion')" id="theme-notion">Notion</button>
-    <button class="theme-btn" onclick="setTheme('stone')" id="theme-stone">Stone</button>
-    <button class="theme-btn" onclick="setTheme('rpg')" id="theme-rpg">RPG</button>
+    <button class="theme-btn active" id="theme-notion">Notion</button>
+    <button class="theme-btn" id="theme-stone">Stone</button>
+    <button class="theme-btn" id="theme-rpg">RPG</button>
   </div>
   <div class="topbar-sep"></div>
   <span id="mode-label" style="font-size:11px;color:var(--text-dim);letter-spacing:0.08em;text-transform:uppercase;"></span>
-  <button id="admin-lock-btn" onclick="lockAdmin()" style="display:none">Lock Admin</button>
+  <button id="admin-lock-btn" style="display:none">Lock Admin</button>
 </div>
 
 <div id="app">
@@ -2387,6 +2387,14 @@ document.getElementById('pw-input').addEventListener('keydown', e => { if(e.key 
 document.getElementById('pw-input-confirm').addEventListener('keydown', e => { if(e.key === 'Enter') checkPassword(); });
 document.getElementById('pw-modal-btn').addEventListener('click', checkPassword);
 document.getElementById('pw-modal-close').addEventListener('click', () => document.getElementById('pw-modal').classList.remove('show'));
+
+// Bind top-bar tabs programmatically (CSP blocks inline onclick)
+document.getElementById('tab-viewer').addEventListener('click', () => setMode('viewer'));
+document.getElementById('tab-admin').addEventListener('click', () => setMode('admin'));
+document.getElementById('admin-lock-btn').addEventListener('click', lockAdmin);
+document.getElementById('theme-notion').addEventListener('click', () => setTheme('notion'));
+document.getElementById('theme-stone').addEventListener('click', () => setTheme('stone'));
+document.getElementById('theme-rpg').addEventListener('click', () => setTheme('rpg'));
 
 function lockAdmin() {
   state.isAdmin = false;
