@@ -5148,7 +5148,7 @@ function buildMagtheridonSection(n) {
   const clickerBlock = buildClickerBlock(d, roster, cSlots);
   const kicksBlock   = buildKicksBlock(d, roster);
   const warlockBlock = buildWarlockCotBlock(d, roster);
-  const tanksCard    = buildMagtTanks(d, roster);
+  const tanksCard    = buildMagtTanks(d, roster, activeRoster);
   const healCard     = buildMagtHeals(d, roster, n);
   const esBlock      = buildESBlock(d.es||{}, getRestoShamans(n, roster), roster);
 
@@ -5166,13 +5166,15 @@ function buildMaulgarSection(n) {
   const d = getMaulgarData(n);
   const magtD = getMagtData(n);
   const roster = getRoster();
+  const active = magtD.active || [];
+  const activeRoster = active.length > 0 ? filterByActive(roster, active) : roster;
 
   const tacticsImgSrc = d.tactics_b64 || d.tactics_url || '';
   const header = bossSectionHeader('🏰 Maulgar\'s Stronghold', tacticsImgSrc, d.explanation);
 
   const coeName = magtD.debuffs?.coe || '';
   const corName = magtD.debuffs?.cor || '';
-  const tanksCard = buildMaulgarTanks(d, roster);
+  const tanksCard = buildMaulgarTanks(d, roster, activeRoster);
   const healCard  = buildMaulgarHeals(d, roster, n);
   const esBlock   = buildESBlock(d.heals||{}, getRestoShamans(n, roster), roster);
   const warlockBlock = buildMaulgarWarlockBlock(d, magtD, roster);
@@ -5193,13 +5195,15 @@ function buildGruulSection(n) {
   const tacticsImgSrc = d.tactics_b64 || d.tactics_url || '';
   const header = bossSectionHeader('🪨 Gruul\'s Lair', tacticsImgSrc, d.explanation);
 
-  // Tanks + per-hunter MD rows
+  // Tanks + per-hunter MD rows (only active roster hunters)
   const gruulMarkerIcons = ['skull','cross','diamond','star','triangle','square','moon'];
   const md = d.md || {};
   const gruulTankToLabel = { [d.tanks?.t1]: 'Main Tank', [d.tanks?.t2]: 'Offtank' };
+  const gruulActive = magtD.active || [];
+  const gruulActiveNames = new Set(gruulActive.length > 0 ? gruulActive : getRoster().map(p => p.name));
 
   const hunterMDRows = Object.entries(md)
-    .filter(([, val]) => val && (typeof val === 'object' ? val.target : val))
+    .filter(([hunterName, val]) => val && (typeof val === 'object' ? val.target : val) && gruulActiveNames.has(hunterName))
     .map(([hunterName, val], i) => {
       const target = typeof val === 'object' ? val.target : val;
       const mIcon = gruulMarkerIcons[i] || '';
@@ -5305,13 +5309,15 @@ function buildESBlock(esData, shamans, roster) {
   </div>`;
 }
 
-function buildHealAssignViewer(healsData, tankLabels, roster) {
+function buildHealAssignViewer(healsData, tankLabels, roster, activeNames) {
   const assignments = healsData?.assignments || {};
   if (!Object.keys(assignments).length) return '';
+  const active = activeNames || new Set(roster.map(p => p.name));
 
-  // Group healers by their targets for display
   const rows = Object.entries(assignments).map(([healerName, targets]) => {
     if (!targets || !targets.length) return '';
+    // Skip healers not in active roster
+    if (!active.has(healerName)) return '';
     const isMyHealer = viewerMe && healerName === viewerMe;
     const isMyTank = viewerMe && Object.values(tankLabels||{}).some(t => t.name === viewerMe && targets.includes(t.name));
     if (viewerMe && !isMyHealer && !isMyTank) return '';
@@ -5319,7 +5325,10 @@ function buildHealAssignViewer(healsData, tankLabels, roster) {
     const col = CLASS_COLORS[p?.cls||'']||'#aaa';
     const isMe = viewerMe === healerName;
     const rgb = isMe ? hexToRgb(col) : '';
-    const targetBadges = targets.map(t => {
+    // Filter out tank targets that are not in active roster (stale from previous week)
+    const validTargets = targets.filter(t => t === 'Raid' || active.has(t));
+    if (!validTargets.length) return '';
+    const targetBadges = validTargets.map(t => {
       if (t === 'Raid') return `<span style="font-size:11px;font-weight:700;color:#7ec8e3;background:rgba(126,200,227,0.15);border:1px solid rgba(126,200,227,0.3);border-radius:3px;padding:2px 7px;">Raid</span>`;
       const tp = roster.find(r=>r.name===t);
       const tCol = CLASS_COLORS[tp?.cls||'']||'#aaa';
@@ -5337,14 +5346,18 @@ function buildGenericHeals(d, healsData, tankLabels, roster, n=1) {
   const tanks = healsData?.tanks || {};
   const hots  = healsData?.hots  || {};
   const raidHealers = Array.isArray(healsData?.raid) ? healsData.raid : [];
-  // Also collect healers assigned 'raid' role from tank blocks
   const raidFromTanks = Object.values(healsData?.tanks||{}).flatMap(hm => {
     const m = Array.isArray(hm) ? {} : (hm||{});
     return Object.entries(m).filter(([,v])=>v==='raid').map(([k])=>k);
   });
   const allRaidHealers = [...new Set([...raidHealers, ...raidFromTanks])];
 
-  const assignRows = buildHealAssignViewer(healsData, tankLabels, roster);
+  // Build active names from magt roster for this roster number
+  const magtD = getMagtData(n);
+  const active = magtD.active || [];
+  const activeNames = new Set(active.length > 0 ? active : roster.map(p => p.name));
+
+  const assignRows = buildHealAssignViewer(healsData, tankLabels, roster, activeNames);
   const tankRows = assignRows || Object.entries(tanks).map(([key, healerData]) => {
     if (!healerData) return '';
     // Support legacy array format
@@ -5411,9 +5424,9 @@ function buildGruulHeals(d, roster, n=1) {
 // ═══════════════════════════════════════════════════════════
 // SHARED SUB-BUILDERS
 // ═══════════════════════════════════════════════════════════
-function buildMagtTanks(d, roster) {
+function buildMagtTanks(d, roster, activeRoster) {
   const mdData = d.md || {};
-  const hunterCol = CLASS_COLORS['Hunter'];
+  const activeNames = new Set((activeRoster || roster).map(p => p.name));
 
   // Tank rows (just tanks, no MD here)
   const tankRows = [
@@ -5432,11 +5445,12 @@ function buildMagtTanks(d, roster) {
     </div>`;
   }).filter(Boolean).join('');
 
-  // MD rows: one per hunter (skip legacy md1/md2 keys which are old format)
+  // MD rows: only show hunters who are in the ACTIVE roster this week
   const mdRows = Object.entries(mdData).map(([hunterName, hunData]) => {
-    // Skip legacy string format or non-hunter keys
     if (typeof hunData !== 'object' || Array.isArray(hunData)) return '';
     if (hunterName === 'md1' || hunterName === 'md2') return '';
+    // Skip if hunter not in active roster
+    if (!activeNames.has(hunterName)) return '';
     const marks = hunData?.marks || [];
     const target = hunData?.target || '';
     if (!marks.length && !target) return '';
@@ -5461,6 +5475,8 @@ function buildMagtTanks(d, roster) {
 function buildMagtHeals(d, roster, n=1) {
   const tanks = d.heals?.tanks || {};
   const hots  = d.heals?.hots  || {};
+  const active = d.active || [];
+  const activeNames = new Set(active.length > 0 ? active : roster.map(p => p.name));
 
   const healTargetLabels = { tank1: 'Tank 1', tank2: 'Tank 2', mt: 'Main Tank' };
   const raidHealers = Array.isArray(d.heals?.raid) ? d.heals.raid : [];
@@ -5472,7 +5488,7 @@ function buildMagtHeals(d, roster, n=1) {
 
   // Per-tank healer rows - use assignments if available
   const healTargetLabelMap = { tank1: {label:'Tank 1', name:d.tanks?.t1}, tank2: {label:'Tank 2', name:d.tanks?.t2}, mt: {label:'Main Tank', name:d.tanks?.t1} };
-  const assignRows = buildHealAssignViewer(d.heals, healTargetLabelMap, roster);
+  const assignRows = buildHealAssignViewer(d.heals, healTargetLabelMap, roster, activeNames);
   const tankRows = assignRows || Object.entries(tanks).map(([key, healerData]) => {
     if (!healerData) return '';
     const healerMap = Array.isArray(healerData)
@@ -5528,9 +5544,10 @@ function buildMagtHeals(d, roster, n=1) {
   return `<div class="v-card"><div class="v-card-title">Heals</div>${content}</div>`;
 }
 
-function buildMaulgarTanks(d, roster) {
+function buildMaulgarTanks(d, roster, activeRoster) {
   const markerIcons = ['skull','cross','diamond','star','triangle','square','moon'];
   const md = d.md || {};
+  const activeNames = new Set((activeRoster || roster).map(p => p.name));
 
   const tankToLabel = {
     [d.tanks?.maulgar]:  'Maulgar',
@@ -5541,14 +5558,13 @@ function buildMaulgarTanks(d, roster) {
   };
 
   const hunterMDRows = Object.entries(md)
-    .filter(([, val]) => val && (typeof val === 'object' ? val.target : val))
+    .filter(([hunterName, val]) => val && (typeof val === 'object' ? val.target : val) && activeNames.has(hunterName))
     .map(([hunterName, val], i) => {
       const target = typeof val === 'object' ? val.target : val;
       const mIcon = markerIcons[i] || '';
       const isMe = viewerMe && (viewerMe === hunterName || viewerMe === target);
       if (viewerMe && !isMe) return '';
       const hp = roster.find(r => r.name === hunterName);
-      const tp = roster.find(r => r.name === target);
       const hCol = CLASS_COLORS[hp?.cls||''] || '#aaa';
       const rgb = isMe ? hexToRgb(hCol) : '';
       const bossLabel = tankToLabel[target] || '';
